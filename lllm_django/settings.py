@@ -24,7 +24,7 @@ SECRET_KEY = 'django-insecure-tu0*0$dw))w+6_9=z_2f7z^^%u=lq4gzb@26^p0&ymsf=f&rqc
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1', '792c-183-83-176-45.ngrok-free.app']
+ALLOWED_HOSTS = ["*",'127.0.0.1', '792c-183-83-176-45.ngrok-free.app','35.209.151.196', 'www.shadowserver.org',   '10.0.2.2', '10.24.146.1']
 
 # Application definition
 
@@ -56,6 +56,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+
 ]
 
 ROOT_URLCONF = 'lllm_django.urls'
@@ -130,7 +131,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 CORS_ORIGIN_WHITELIST = [
     'http://localhost:3000',
-    'https://792c-183-83-176-45.ngrok-free.app'
+    'https://792c-183-83-176-45.ngrok-free.app',
+    "http://10.0.2.2:8081",
+    "http://192.168.1.100:8081",
+    "http://localhost:8081"
 ]
 CORS_ALLOW_METHODS = [
     'DELETE',
@@ -171,7 +175,7 @@ EMAIL_USE_TLS = 'True'
 
 EMAIL_HOST_USER = 'harshitshrimalee.wevois@gmail.com'
 
-EMAIL_HOST_PASSWORD = "hplc zbsf wrbv bvdk"
+EMAIL_HOST_PASSWORD = "xldk bhzq nywn vwzz"
 
 
 CELERY_BROKER_URL = 'redis://localhost:6379/0'  # Change to your broker (Redis example)

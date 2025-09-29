@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Employee SOP Reports</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 1rem;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 2rem;
+            border-radius: 20px;
+            margin-bottom: 2rem;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+
+        .header p {
+            color: #6b7280;
+            font-size: 1.1rem;
+        }
+
+        .filter-section {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 1.5rem;
+            border-radius: 16px;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .filter-form {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-form label {
+            font-weight: 600;
+            color: #374151;
+            font-size: 0.95rem;
+        }
+
+        .filter-form select {
+            padding: 0.75rem 1rem;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            background: white;
+            color: #374151;
+            min-width: 200px;
+            transition: all 0.3s ease;
+        }
+
+        .filter-form select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .reset-button {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .reset-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(255, 107, 107, 0.3);
+        }
+
+        /* Desktop Table */
+        .table-container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .desktop-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .desktop-table th {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 1.25rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .desktop-table td {
+            padding: 1rem;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            font-size: 0.95rem;
+            transition: background-color 0.3s ease;
+        }
+
+        .desktop-table tbody tr:hover {
+            background-color: rgba(102, 126, 234, 0.05);
+        }
+
+        .desktop-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .call-button {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            padding: 0.6rem 1.2rem;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .call-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.3);
+        }
+
+        .status-badge {
+            padding: 0.4rem 0.8rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .filter-form input[type="date"] {
+    padding: 0.75rem 1rem;
+    border: 2px solid #e5e7eb;
+    border-radius: 12px;
+    font-size: 0.95rem;
+    background: white;
+    color: #374151;
+    transition: all 0.3s ease;
+}
+
+.filter-form input[type="date"]:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+
+        .status-yes {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+        }
+
+        .status-no {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+        }
+
+        .mobile-card {
+            display: none;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #6b7280;
+        }
+
+        .empty-state h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Tablet Styles */
+        @media (max-width: 1024px) {
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .desktop-table th,
+            .desktop-table td {
+                padding: 0.8rem 0.6rem;
+                font-size: 0.85rem;
+            }
+
+            .filter-form {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .filter-form select {
+                min-width: 100%;
+            }
+        }
+
+        /* Mobile Styles */
+        @media (max-width: 768px) {
+            body {
+                padding: 0.5rem;
+            }
+
+            .header {
+                padding: 1.5rem;
+                margin-bottom: 1rem;
+            }
+
+            .header h1 {
+                font-size: 1.8rem;
+            }
+
+            .filter-section {
+                padding: 1rem;
+                margin-bottom: 1rem;
+            }
+
+            .desktop-table {
+                display: none;
+            }
+
+            .mobile-card {
+                background: rgba(255, 255, 255, 0.95);
+                backdrop-filter: blur(10px);
+                margin-bottom: 1rem;
+                padding: 1.5rem;
+                border-radius: 16px;
+                box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                display: block;
+                transition: transform 0.3s ease;
+            }
+
+            .mobile-card:hover {
+                transform: translateY(-2px);
+            }
+
+            .mobile-card h3 {
+                margin-bottom: 1rem;
+                font-size: 1.3rem;
+                font-weight: 700;
+                color: #1f2937;
+            }
+
+            .mobile-card p {
+                margin: 0.6rem 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 0.5rem 0;
+                border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            }
+
+            .mobile-card p:last-of-type {
+                border-bottom: none;
+            }
+
+            .card-label {
+                font-weight: 600;
+                color: #6b7280;
+                font-size: 0.9rem;
+            }
+
+            .card-value {
+                font-weight: 500;
+                color: #1f2937;
+            }
+
+            .call-button {
+                margin-top: 1rem;
+                width: 100%;
+                justify-content: center;
+                padding: 0.8rem;
+            }
+        }
+
+        /* Animation for page load */
+        .fade-in {
+            animation: fadeIn 0.6s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header fade-in">
+            <h1>Employee SOP Reports</h1>
+            <p>Monitor and manage employee standard operating procedures</p>
+        </div>
+
+        <div class="filter-section fade-in">
+    <form method="get" class="filter-form">
+        <label for="site">Filter by Site:</label>
+        <select name="site" id="site">
+            <option value="">-- All Sites --</option>
+            {% for site in all_sites %}
+                <option value="{{ site }}" {% if site == selected_site %}selected{% endif %}>{{ site|title }}</option>
+            {% endfor %}
+        </select>
+
+        <label for="date">Filter by Date:</label>
+        <input type="date" name="date" id="date" value="{{ selected_date|default:'' }}">
+
+        <button type="submit" class="reset-button">🔍 Apply</button>
+
+        {% if selected_site or selected_date %}
+            <a href="{% url 'sop_report_te' %}" class="reset-button">
+                🔄 Reset Filter
+            </a>
+        {% endif %}
+    </form>
+</div>
+
+
+        <!-- Desktop Table -->
+        <div class="table-container fade-in">
+            <table class="desktop-table">
+                <thead>
+                    <tr>
+                        <th>Site</th>
+                        <th>Name</th>
+                        <th>Mobile</th>
+                        <th>Arrival</th>
+                        <th>Departure</th>
+                        <th>Violation</th>
+
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for report in reports %}
+                    <tr>
+                        <td><strong>{{ report.site_name }}</strong></td>
+                        <td>{{ report.employee_name }}</td>
+                        <td>{{ report.mobile_number }}</td>
+                        <td>{{ report.arrival_time|default:"--" }}</td>
+                        <td>{{ report.departure_time|default:"--" }}</td>
+                        <td>{{ report.violation|default:"None" }}</td>
+
+                        <td><a class="call-button" href="tel:{{ report.mobile_number }}">📞 Call</a></td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="empty-state">
+                            <h3>No reports found</h3>
+                            <p>Try adjusting your filters or check back later.</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Mobile Card View -->
+        {% for report in reports %}
+        <div class="mobile-card fade-in">
+            <h3>{{ report.employee_name }}</h3>
+            <p>
+                <span class="card-label">Site:</span>
+                <span class="card-value">{{ report.site_name }}</span>
+            </p>
+            <p>
+                <span class="card-label">Mobile:</span>
+                <span class="card-value">{{ report.mobile_number }}</span>
+            </p>
+            <p>
+                <span class="card-label">Arrival:</span>
+                <span class="card-value">{{ report.arrival_time|default:"--" }}</span>
+            </p>
+            <p>
+                <span class="card-label">Departure:</span>
+                <span class="card-value">{{ report.departure_time|default:"--" }}</span>
+            </p>
+            <p>
+                <span class="card-label">Violation:</span>
+                <span class="card-value">{{ report.violation|default:"None" }}</span>
+            </p>
+
+            <a class="call-button" href="tel:{{ report.mobile_number }}">📞 Call {{ report.employee_name }}</a>
+        </div>
+        {% empty %}
+        <div class="empty-state fade-in">
+            <h3>No reports found</h3>
+            <p>Try adjusting your filters or check back later.</p>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>

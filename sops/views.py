@@ -607,6 +607,7 @@ class OCRDieselSlipValidationAPIView(APIView):
                     image = Image.open(io.BytesIO(image_data)).convert('RGB')
                     result = ocr.ocr(np.array(image))
                     extracted_text = " ".join([line[1][0] for block in result for line in block])
+                    print(extracted_text)
 
                     is_amount_valid = expected_amount in extracted_text
                     is_volume_valid = expected_volume in extracted_text

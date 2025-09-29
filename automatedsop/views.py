@@ -8,7 +8,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from datetime import timedelta
-import matplotlib.pyplot as plt
 import cv2
 import firebase_admin
 import numpy as np
@@ -17,6 +16,7 @@ import requests
 from PIL import Image
 from django.conf import settings
 from django.core.mail import EmailMessage, EmailMultiAlternatives
+from django.http import JsonResponse
 from firebase_admin import credentials, initialize_app, db, _apps
 from firebase_admin import storage
 from paddleocr import PaddleOCR
@@ -25,93 +25,29 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from ultralytics import YOLO
-
 from sops.databaseurls import FIREBASE_DB_MAP
 from sops.mailtowhom import site_info
 from sops.models import SopStep, City, Sops
 from sops.serializers import CitySerializer, SopsSerializer
+from .models import TripValidationReport, FuelValidationReport, EmployeeSOPReport, SkipLinesReport
 
-# Gemini API Config
-API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-API_KEY = "AIzaSyC4GFljfImdJ39uzkyj2vLZqbjqZ3fNGjg"
+from automatedsop.services.gemini_service import GeminiService
+from automatedsop.services.email_service import EmailMessage
+from automatedsop.services import email_service
+from automatedsop.Prompt_creation_methods.promts_methods import ask_question, ask_question_fe
+from automatedsop.Filter_methods.filter_firebase_service import filter_data, filter_data2
 
+# os.environ['FLAGS_use_mkldnn'] = '0'
+# os.environ['OMP_NUM_THREADS'] = '1'
+# os.environ['MKL_NUM_THREADS'] = '1'
+gemini = GeminiService()
+email = EmailMessage()
 ROLE_MAPPINGS = {
     "field executive": ["fe", "field exec", "field executive"],
     "service executive": ["se", "service exec", "service executive"],
     "transportation executive": ["te", "transportation exec", "transportation executive"]
 }
-
-
-def load_json_file(file_path):
-    """Load a JSON file and return its content."""
-    with open(file_path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def filter_data2(employee_data, app, role="Field Executive", expected_time="09:00"):
-    from datetime import datetime
-
-    # Step 1: Filter employees by role
-    filtered_employees = []
-    employee_names = {}
-
-    for emp_id, emp in dict(employee_data).items():
-        if isinstance(emp, dict):
-            designation = emp.get("designation", "").lower()
-            name = emp.get("name", "")
-            if designation == role.lower():
-                filtered_employees.append(emp_id)
-                employee_names[emp_id] = name
-
-    filtered_work = []
-    date_obj = datetime.today()
-    date_str = date_obj.strftime("%Y-%m-%d")
-    year = date_obj.strftime("%Y")
-    month = date_obj.strftime("%m")
-    day = date_obj.strftime("%d")
-
-    month_name_map = {
-        "01": "January", "02": "February", "03": "March", "04": "April",
-        "05": "May", "06": "June", "07": "July", "08": "August",
-        "09": "September", "10": "October", "11": "November", "12": "December"
-    }
-    month_name = month_name_map[month]
-
-    for emp_id in filtered_employees:
-        try:
-
-            firebase_path = f'Attendance/{emp_id}/{year}/{month_name}/{date_str}'
-            # Get only the required date’s work data
-            field_data = db.reference(firebase_path, app=app).get()
-            if field_data == None:
-                continue
-
-            record = field_data
-
-        except KeyError:
-            continue  # No data for this date
-
-        in_details = record.get("inDetails", {})
-        out_details = record.get("outDetails", {})
-        arrival_time = in_details.get("time", "").strip()
-
-        if arrival_time:
-            status = "On Time" if arrival_time <= expected_time else "Late"
-        else:
-            status = "No Entry"
-
-        filtered_work.append({
-            "date": date_str,
-            "employee_id": emp_id,
-            "employee_name": employee_names.get(emp_id, ""),
-            "inDetails": in_details.get('time'),
-            "outDetails": out_details.get('time'),
-            "status": status
-        })
-
-    return {
-        "filtered_work": filtered_work
-    }
+ocr = PaddleOCR(use_angle_cls=False, lang='en')
 
 
 class NoBotAskGeminiAPIView(APIView):
@@ -153,16 +89,16 @@ class NoBotAskGeminiAPIView(APIView):
             # Save Excel report
             report_path = os.path.join(settings.BASE_DIR, "reports")
             os.makedirs(report_path, exist_ok=True)
-            filename = f"{formatted_site_name}_dustbin_status_report_{date}.xlsx"
+            filename = f"{formatted_site_name}_field_exe_login_logout_sop_{date}.xlsx"
             filepath = os.path.join(report_path, filename)
             df.to_excel(filepath, index=False)
             print('sending mail')
             # Send email
             mail = EmailMessage(
-                subject=f"{site_name} - Dustbin Status Report - {date}",
-                body="Please find attached the dustbin status report.",
+                subject=f"{site_name} - field exe - {date}",
+                body="Please find attached the field exe status report.",
                 from_email="harshitshrimalee.wevois@gmail.com",
-                to=[email],
+                to=["Wevoisdinesh@gmail.com", "harshitshrimalee22@gmail.com"],
             )
             mail.attach_file(filepath)
             mail.send()
@@ -171,78 +107,6 @@ class NoBotAskGeminiAPIView(APIView):
             os.remove(filepath)
 
         return Response({"status": "Done sending reports to all sites."})
-
-
-def filter_data(employee_file, app, role="Transportation Executive", expected_time="09:00", ):
-    """
-    Filters employee and work detail data to find records for Transport Executives for the previous day.
-    """
-
-    filtered_employees = []
-    employee_names = {}
-    employee_mobile_number = {}
-
-    for emp_id, emp in dict(employee_file).items():
-        if isinstance(emp, dict):
-            designation = emp.get("designation", "").lower()
-            name = emp.get("name", "")
-            mobile_number = emp.get("mobile", "")
-            if designation == role.lower():
-                filtered_employees.append(emp_id)
-                employee_names[emp_id] = name
-                employee_mobile_number[emp_id] = mobile_number
-
-    filtered_work = []
-
-    # Calculate previous day's date
-    date_obj = datetime.today()
-    date_str = date_obj.strftime("%Y-%m-%d")
-    year = date_obj.strftime("%Y")
-    month = date_obj.strftime("%m")
-    day = date_obj.strftime("%d")
-
-    month_name_map = {
-        "01": "January", "02": "February", "03": "March", "04": "April",
-        "05": "May", "06": "June", "07": "July", "08": "August",
-        "09": "September", "10": "October", "11": "November", "12": "December"
-    }
-    month_name = month_name_map[month]
-    firebase_path = f'DailyWorkDetail/{year}/{month_name}/{date_str}'
-
-    # Get only the required date’s work data
-    work_file = db.reference(firebase_path, app=app).get()
-    print(work_file.keys())
-
-    for emp_id in filtered_employees:
-        try:
-            print(work_file)
-            record = work_file[emp_id]
-            print(record)
-        except KeyError:
-            continue  # No data for this employee on this day
-
-        in_details = record.get("card-swap-entries", {})
-        arrival_time = ""
-        departure_time = ""
-
-        for time_str, status in in_details.items():
-            if status == "In":
-                arrival_time = time_str.strip()
-            elif status == "Out":
-                departure_time = time_str.strip()
-
-        filtered_work.append({
-            "date": date_str,
-            "employee_id": emp_id,
-            "employee_name": employee_names.get(emp_id, ""),
-            "employee_mobile_number": employee_mobile_number.get(emp_id, ""),
-            "inDetails": arrival_time,
-            "outDetails": departure_time,
-        })
-
-    return {
-        "filtered_work": filtered_work
-    }
 
 
 class NoBotAskGeminiAPIViewTransportExec(APIView):
@@ -254,6 +118,7 @@ class NoBotAskGeminiAPIViewTransportExec(APIView):
             date = date_obj.strftime("%Y-%m-%d")
 
             for site in site_info:
+
                 site_name = site["site_name"]
                 db_name = site['firebase_db']
                 email = site["email"]
@@ -262,8 +127,6 @@ class NoBotAskGeminiAPIViewTransportExec(APIView):
 
                 print(f"\n📍 Processing site: {site_name}")
 
-                # Initialize Firebase app
-                print(_apps)
                 try:
                     cred = credentials.Certificate("sops/cert.json")
                     app = initialize_app(cred, {
@@ -273,281 +136,81 @@ class NoBotAskGeminiAPIViewTransportExec(APIView):
                 except Exception as init_err:
                     print(f"❌ Failed to init app for {site_name}: {init_err}")
                     continue
-
-                employee_data = db.reference('EmployeeDetailData', app=app).get()
+                print('i am here 1')
+                if site_name == 'sonipath':
+                    employee_data = db.reference('Employees/GeneralDetails', app=app).get()
+                else:
+                    employee_data = db.reference('EmployeeDetailData', app=app).get()
+                print('i am here 2')
                 filtered_data = filter_data(employee_data, app)
-
+                print('i am here 3')
                 # Get SOP steps
                 sop_steps = SopStep.objects.filter(sop_id=2)
                 sop_detail = "\n".join([step.description for step in sop_steps])
 
                 # Ask Gemini
                 response = ask_question(filtered_data, sop_detail)
-                print(response)
                 response_data = json.loads(response)
-                df = pd.DataFrame(response_data if isinstance(response_data, list) else [response_data])
+                print(response_data)
+                records = response_data if isinstance(response_data, list) else [response_data]
 
-                # Save Excel report
-                report_path = os.path.join(settings.BASE_DIR, "reports")
-                os.makedirs(report_path, exist_ok=True)
-                filename = f"{formatted_site_name}_transport_{date}.xlsx"
-                filepath = os.path.join(report_path, filename)
-                df.to_excel(filepath, index=False)
-                print('mail sending')
-                # Send email
-                mail = EmailMessage(
-                    subject=f"{site_name} - tarnsport Report - {date}",
-                    body="Please find attached the dustbin status report.",
-                    from_email="harshitshrimalee.wevois@gmail.com",
-                    to=["harshitshrimalee22@gmail.com"],
+                def parse_time_safe(time_str):
+                    try:
+                        return datetime.strptime(time_str, "%H:%M:%S").time()
+                    except (ValueError, TypeError):
+                        return None
+
+                for record in records:
+                    try:
+                        emp_id = record.get("Employee ID", "")
+                        record_date = datetime.strptime(record.get("Date", date), "%Y-%m-%d").date()
+
+                        # ✅ Avoid duplicate: check if this record already exists
+                        if EmployeeSOPReport.objects.filter(employee_id=emp_id, date=record_date).exists():
+                            print(f"⏩ Skipping duplicate: {record.get('Employee Name')} ({emp_id}) on {record_date}")
+                            continue
+
+                        # Safe time parsing
+
+                        # Create record
+                        EmployeeSOPReport.objects.create(
+                            site_name=site_name,
+                            employee_id=emp_id,
+                            employee_name=record.get("Employee Name", ""),
+                            date=record_date,
+                            arrival_time=parse_time_safe(record.get("Arrival Time")),
+                            departure_time=parse_time_safe(record.get("Departure Time")),
+                            mobile_number=record.get("employee mobile number", ""),
+                            violation=record.get("Violation", ""),
+                            is_sop_followed=str(record.get("is_sop_follow", "True")).lower() == "true"
+                        )
+
+                    except Exception as save_err:
+                        print(f"⚠️ Error saving record for {record.get('Employee Name')}: {save_err}")
+                report_url = f"http://35.209.151.196:8001/auto/sop-te-reports/?site={site_name}&date={date}"
+                subject = f"SOP Report - {site_name.title()} - {date}"
+                body = (
+                    f"Hello,\n\n"
+                    f"The SOP report for *{site_name.title()}* on *{date}* has been generated.\n\n"
+                    f"You can view it at the following link:\n{report_url}\n\n"
+                    f"Best regards,\nSOP Automation System"
                 )
-                mail.attach_file(filepath)
-                mail.send()
+                email_list = "harshitshrimalee22@gmail.com, wevoisdinesh@gmail.com".replace(" ", "").split(",")
 
-                # Optional: Remove the file after sending
-                os.remove(filepath)
+                email = EmailMessage(
+                    subject=subject,
+                    body=body,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    to=email_list,
+                )
+
+                email.send()
+                print(f"✅ Email sent to {email}")
 
             return Response({"status": "Done sending reports to all sites."})
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-def call_gemini_api(prompt, retries=5, delay=5):
-    headers = {"Content-Type": "application/json"}
-    params = {"key": API_KEY}
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-
-    def clean_model_output(text):
-        text = text.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        elif text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        return text.strip()
-
-    for attempt in range(retries):
-        try:
-            response = requests.post(API_URL, headers=headers, params=params, json=payload)
-            response.raise_for_status()
-            result = response.json()
-            raw_text = result['candidates'][0]['content']['parts'][0]['text']
-            cleaned_text = clean_model_output(raw_text)
-            # optional debug log
-            return cleaned_text
-        except requests.exceptions.HTTPError as http_err:
-            if response.status_code == 429:
-                print(f"Rate limit hit. Retrying in {delay} seconds...")
-                time.sleep(delay)
-                delay *= 2  # Exponential backoff
-            else:
-                print(f"HTTP error: {http_err}")
-                return f"Error: {http_err}"
-        except Exception as err:
-            print(f"Unexpected error: {err}")
-            return "Error: Unable to process the request."
-    return "Error: Failed after retries."
-
-
-def load_sop_rules(sop_file):
-    try:
-        with open(sop_file, "r", encoding="utf-8") as file:
-            sop_rules = json.load(file)
-        return sop_rules
-    except Exception as e:
-        print(f"Error loading SOP rules: {e}")
-        return []
-
-
-def ask_question_fe(filtered_data, sop_detail, sop_file="sops/translated_output04.json"):
-    """
-    Constructs a prompt using filtered data, SOP rules, and the user question,
-    then sends it to Gemini.
-    """
-    # Convert filtered data to a JSON string
-    data_str = json.dumps(filtered_data, indent=4)
-
-    # Load SOP rules
-    sop_rules = load_sop_rules(sop_file)
-    sop_str = json.dumps(sop_rules, indent=4) if sop_rules else "No SOP rules available."
-    # print(sop_str, "eee")
-    # print(data_str)
-    print(sop_detail)
-
-    # Construct the prompt
-    prompt = f"""
-    You are an expert in Operations and SOP (Standard Operating Procedure) Compliance Analysis.
-
-    Your task is to:
-    1. Analyze the attendance data *line by line*.
-    2. Apply *each SOP rule strictly*.
-    3. Return only the entries that are *non-compliant, clearly stating **which SOP rule(s)* were violated.
-    4. winter september to april are winter month 
-
-    ---
-
-    ### SOP Rules:
-    {str(sop_detail)}
-
-    ### Filtered Attendance Data:
-    {str(data_str)}
-
-    ---
-
-    ### Output Format:
-    Answer in json format.
-    [
-      {{
-        "Employee ID": "...",
-        "Employee Name": "...",
-        "Date": "...",
-        "In-Time": "...",
-        "Out-Time": "...",
-        "Total working hours": "" # calculate based on in and out time
-        "Violation": ".." which sops is violated give all 
-      }},
-      ...
-    ]
-
-    Only return entries that have any kind of SOP violation.
-    Be precise, do not skip any rule, and avoid unnecessary explanation.
-    """
-    return call_gemini_api(prompt)
-
-
-def ask_question(filtered_data, sop_detail, sop_file="sops/translated_output04.json"):
-    print('i am called')
-    """
-    Constructs a prompt using filtered data, SOP rules, and the user question,
-    then sends it to Gemini.
-    """
-    # Convert filtered data to a JSON string
-    data_str = json.dumps(filtered_data, indent=4)
-
-    # Load SOP rules
-    sop_rules = load_sop_rules(sop_file)
-    sop_str = json.dumps(sop_rules, indent=4) if sop_rules else "No SOP rules available."
-    # print(sop_str, "eee")
-    # print(data_str)
-
-    # Construct the prompt
-    prompt = f"""
-        You are an expert in Operations and SOP (Standard Operating Procedure) Compliance Analysis.
-
-        Your task is to:
-        1. Analyze the attendance and work details data line by line.
-        2. Apply each SOP rule strictly.
-        3. Return only the entries that are non-compliant, clearly stating **which SOP rule(s) were violated.
-        4. Winter months are from September to April.
-
-        ---
-
-        ### SOP Rules:
-        {str(sop_detail)}
-
-        ### Filtered Attendance Data:
-        {str(data_str)}
-
-        ### Work Details Data (Extracted from Firebase):
-        {{
-            "Date": "YYYY-MM-DD",  # Work date in YYYY-MM-DD format
-            "Employee ID": "...",  # Employee ID
-            "Employee Name": "...",  # Employee Name
-            "Arrival Time": "HH:MM:SS",  # Time when the employee arrived
-            "Departure Time": "HH:MM:SS",  # Time when the employee left
-            "employee mobile number":"..."
-
-            # Add any other relevant fields as per the structure you expect from Firebase
-        }}
-
-        ---
-        do not add ```json in the start
-        ### Output Format:
-        [
-          {{
-            "Employee ID": "...",
-            "Employee Name": "...",
-            "Date": "...",
-            "Arrival Time": "HH:MM:SS",
-            "Departure Time": "HH:MM:SS",
-            "employee mobile number":"..."
-
-            "Violation": "...",  # Full explanation of all SOP rules that were broken, with timestamps if necessary
-          }},
-          ...
-        ]
-
-        Only return entries that have any kind of SOP violation.
-        Be precise, avoid unnecessary explanation.
-    """
-    return call_gemini_api(prompt)
-
-
-def extract_info_from_question(question):
-    """Extracts role and date dynamically using Gemini API."""
-    prompt = f"""
-    Extract the role and date from the given question:
-    Question: "{question}"
-    Given the following predefined roles:
-    - Field Executive
-    - Operation Executive
-    - Transportation Executive
-
-
-    Respond in JSON format:
-    {{
-        "role": "detected role",
-        "date": "YYYY-MM-DD" (if applicable, else null)
-    }}
-    """
-    result = call_gemini_api(prompt)
-
-    # If API response is an error message, return None
-    if result.startswith("Error"):
-        print("API Error:", result)
-        return None, None
-
-    # Remove Markdown formatting (```json ... ```)
-    clean_result = re.sub(r"```json\n|\n```", "", result).strip()
-
-    try:
-
-        extracted_data = json.loads(clean_result)
-        role = extracted_data.get("role")
-        date = extracted_data.get("date")
-        if not date:
-            # Use current date in your preferred format, e.g. "2025-04-07"
-            date = datetime.today().strftime("%Y-%m-%d")
-
-        return role, date
-    except json.JSONDecodeError:
-        print("JSON Decode Error: Response is not valid JSON.")
-        role = extracted_data.get("role")
-        # print("Raw Response:", result)
-        return None, None
-
-
-def filterskiplinedata(skipline):
-    today = datetime.today().strftime("%Y-%m-%d")
-    filtered_data = {}
-
-    for ward_name, ward_data in skipline.items():
-        # Skip non-ward keys if any (like metadata)
-        if not isinstance(ward_data, dict):
-            continue
-
-        if today in ward_data:
-            date_info = ward_data.get(today, {})
-            line_status = date_info.get("LineStatus", "NotFound")
-            if line_status != 'LineCompleted':
-                filtered_data[ward_name] = {
-                    "date": today,
-                    "LineStatus": line_status
-                }
-
-    return filtered_data
 
 
 class NoBotAskGeminiAPIViewSkipLines(APIView):
@@ -599,111 +262,143 @@ class NoBotAskGeminiAPIViewSkipLines(APIView):
 class OCRDieselSlipValidationAPIView(APIView):
     def post(self, request):
         try:
-            # Get date from query param, fallback to yesterday
-            date_param = request.GET.get('date')
-            if date_param:
-                date = date_param
-            else:
-                date = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+            date_obj = datetime.today() - timedelta(days=1)
+            date = date_obj.strftime("%Y-%m-%d")
 
-            year, month_num, day = date.split("-")
-            month_name_map = {
-                "01": "January", "02": "February", "03": "March", "04": "April",
-                "05": "May", "06": "June", "07": "July", "08": "August",
-                "09": "September", "10": "October", "11": "November", "12": "December"
-            }
-            month_name = month_name_map.get(month_num)
+            for site in site_info:
+                site_name = site["site_name"]
+                db_name = site['firebase_db']
+                folder_name = site['folder_name']
+                email = site["email"]
+                formatted_site_name = site_name.lower().replace(" ", "-")
+                app_name = f"{formatted_site_name}-app"
 
-            # Fetch data from Firebase
-            entries_ref = db.reference(f"/DieselEntriesData/{year}/{month_name}/{date}")
-            entries_data = entries_ref.get()
-            print(entries_data)
-
-            if not entries_data:
-                return Response({"error": "No entries found for the given date."}, status=404)
-
-            # Initialize PaddleOCR
-            ocr = PaddleOCR(use_angle_cls=True, lang='en')
-
-            # Setup Firebase Storage
-            bucket = storage.bucket()
-
-            results = []
-            i = 0
-
-            for key, value in entries_data.items():
-                i += 1
-                if i == 2:
-                    break
-
-                if key == 'lastEntry':
-                    continue
-
-                expected_amount = str(value.get("amount", ""))
-                print(expected_amount, key)
-                expected_volume = str(value.get("quantity", ""))
-                vehicle = str(value.get("vehicle", ""))
-
-                # Define image path in storage
-                blob_path = f"Sikar/DieselEntriesImages/{year}/{month_name}/{date}/{key}/amountSlipImage"
-                blob = bucket.blob(blob_path)
+                print(f"\n📍 Processing site: {site_name}")
 
                 try:
-                    time.sleep(1.5)
-                    image_data = blob.download_as_bytes()
-                    image = Image.open(io.BytesIO(image_data)).convert('RGB')
-                    result = ocr.ocr(np.array(image))
-                    extracted_text = " ".join([line[1][0] for block in result for line in block])
+                    if app_name in _apps:
+                        app = _apps[app_name]
+                    else:
+                        cred = credentials.Certificate("sops/cert.json")
+                        app = initialize_app(cred, {
+                            'databaseURL': f'https://{db_name}.firebaseio.com/',
+                            'storageBucket': f'dtdnavigator.appspot.com'
+                        }, name=app_name)
+                except Exception as init_err:
+                    print(f"❌ Failed to init app for {site_name}: {init_err}")
+                    continue
 
-                    is_amount_valid = expected_amount in extracted_text
-                    is_volume_valid = expected_volume in extracted_text
+                year, month_num, day = date.split("-")
+                month_name_map = {
+                    "01": "January", "02": "February", "03": "March", "04": "April",
+                    "05": "May", "06": "June", "07": "July", "08": "August",
+                    "09": "September", "10": "October", "11": "November", "12": "December"
+                }
+                month_name = month_name_map.get(month_num)
 
-                    prompt = f"""
-                    You are given the following extracted text from an image, along with the expected amount and volume values.
+                entries_ref = db.reference(f"/DieselEntriesData/{year}/{month_name}/{date}", app=app)
+                entries_data = entries_ref.get()
+                print(entries_data)
 
-                    Your task is to check if the expected amount and volume are clearly present in the extracted text.
+                if not entries_data:
+                    continue
 
-                    If the expected value appears in a jumbled, noisy, or unclear way (e.g. OCR errors, garbled numbers), consider it as *false*, and mention that in a remark.
+                ocr = PaddleOCR(
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False)
+                bucket = storage.bucket(app=app)
 
-                    Return the result strictly in this JSON format:
-                    Note: if there is no amount in extracted_text and rate is present then multiply rate by volume then check amount to the original
-                    if amount is little bit off like 9.00 and extracted is 9.0 both are 9 this is ok according to SOP but 9.3 and 9.5 are not ok
+                results = []
 
-                    {{
-                        "amount_match": <true/false>, expected_amount, extracted_amount
-                        "volume_match": <true/false>, expected_volume, extracted_volume
-                        "remark": "<brief reason if any value is false>"
-                    }}
+                for key, value in entries_data.items():
+                    if key == 'lastEntry':
+                        continue
 
-                    Expected values:
-                    - expected_amount = {expected_amount}
-                    - expected_volume = {expected_volume}
+                    created_key = value['createdBy']
+                    driver_ref = db.reference(f"/Employees/{created_key}/GeneralDetails", app=app)
+                    driver_data = driver_ref.get()
+                    print(driver_data)
+                    driver_name = driver_data['name']
+                    mobile_no = driver_data['mobile']
 
-                    Extracted Text:
-                    {extracted_text}
-                    """
-                    print(extracted_text)
+                    expected_amount = str(value.get("amount", ""))
+                    expected_volume = str(value.get("quantity", ""))
+                    vehicle = str(value.get("vehicle", ""))
 
-                    result_raw = call_gemini_api(prompt)  # this should return a JSON string
-                    result = json.loads(result_raw)
-                    print(result)
+                    blob_path = f"{folder_name}/DieselEntriesImages/{year}/{month_name}/{date}/{key}/amountSlipImage"
+                    blob = bucket.blob(blob_path)
 
-                    results.append({
-                        "key": key,
-                        "vehicle": vehicle,
-                        "amount_match": result['amount_match'],
-                        "volume_match": result['volume_match'],
-                        "expected_amount": expected_amount,
-                        "expected_volume": expected_volume,
-                        "extracted_text": extracted_text
-                    })
-                except Exception as e:
-                    print(e)
-                    results.append({
-                        "key": key,
-                        "status": "Error processing image",
-                        "error": str(e)
-                    })
+                    try:
+                        time.sleep(1.5)
+                        image_data = blob.download_as_bytes()
+                        image = Image.open(io.BytesIO(image_data)).convert('RGB')
+                        result = ocr.ocr(np.array(image))
+                        extracted_text = " ".join([line[1][0] for block in result for line in block])
+                        print(result)
+
+                        prompt = f"""
+                        You are given the following extracted text from an image, along with the expected amount and volume values.
+
+                        Your task is to check if the expected amount and volume are clearly present in the extracted text.
+
+                        If the expected value appears in a jumbled, noisy, or unclear way (e.g. OCR errors, garbled numbers), consider it as *false*, and mention that in a remark.
+
+                        Return the result strictly in this JSON format:
+                        Note: if there is no amount in extracted_text and rate is present then multiply rate by volume then check amount to the original
+                        if amount is little bit off like 9.00 and extracted is 9.0 both are 9 this is ok according to SOP but 9.3 and 9.5 are not ok
+
+                        {{
+                            "amount_match": <true/false>,
+                            "expected_amount": "{expected_amount}",
+                            "extracted_amount": "...",
+                            "volume_match": <true/false>,
+                            "expected_volume": "{expected_volume}",
+                            "extracted_volume": "...",
+                            "remark": "<brief reason>"
+                        }}
+
+                        Extracted Text:
+                        {extracted_text}
+                        """
+
+                        result_raw = GeminiService.call_api(prompt)
+                        print(result_raw)
+                        result = json.loads(result_raw)
+
+                        # Save to DB
+                        if True:
+                            FuelValidationReport.objects.create(
+                                site_name=site_name,
+                                vehicle=vehicle,
+                                key=key,
+                                expected_amount=expected_amount,
+                                expected_volume=expected_volume,
+                                extracted_text=extracted_text,
+                                amount_match=result.get('amount_match', False),
+                                volume_match=result.get('volume_match', False),
+                                image_path=f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{blob_path.replace('/', '%2F')}?alt=media",
+                                date=date,
+
+                            )
+
+                        results.append(result)
+
+
+                    except Exception as e:
+                        print(e)
+                        results.append({"key": key, "status": "Error processing image", "error": str(e)})
+
+                # Optional report export (if needed)
+                report_url = f"http://35.209.151.196:8001/auto/fuel-report/?date={date}&site_name={site_name}"
+
+                mail = EmailMessage(
+                    subject=f"{site_name} - fuel Validation Report - {date}",
+                    body=f"The fuel validation report is ready. Click the link below to view it:\n\n{report_url}",
+                    from_email="harshitshrimalee.wevois@gmail.com",
+                    to=["harshitshrimalee22@gmail.com", "Wevoisdinesh@gmail.com"],
+                )
+                mail.send()
 
             return Response({"date": date, "results": results})
 
@@ -746,21 +441,31 @@ class SendSopDataApiView(APIView):
 
 
 class NoBotAskGeminiAPItripalstatus(APIView):
-    def post(self, request):
+    already_processed = False
+
+    def get(self, request):
+
         try:
+            print(f"🔁 API called at: {datetime.now()} from {request.META.get('REMOTE_ADDR')}")
             date = (datetime.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+            # date = "2025-07-05"
             for site in site_info:
+
                 site_name = site["site_name"]
-                db_name = site['firebase_db']
+                db_name = site["firebase_db"]
                 email = site["email"]
                 formatted_site_name = site_name.lower().replace(" ", "-")
                 app_name = f"{formatted_site_name}-app"
+
                 try:
                     cred = credentials.Certificate("sops/cert.json")
-                    app = initialize_app(cred, {
-                        'databaseURL': f'https://{db_name}.firebaseio.com/',
-                        'storageBucket': f'dtdnavigator.appspot.com'
-                    }, name=app_name)
+                    if app_name not in firebase_admin._apps:
+                        app = initialize_app(cred, {
+                            'databaseURL': f'https://{db_name}.firebaseio.com/',
+                            'storageBucket': 'dtdnavigator.appspot.com'
+                        }, name=app_name)
+                    else:
+                        app = firebase_admin.get_app(app_name)
                 except Exception as init_err:
                     print(f"❌ Failed to init app for {site_name}: {init_err}")
                     continue
@@ -773,20 +478,13 @@ class NoBotAskGeminiAPItripalstatus(APIView):
                 }
                 month_name = month_name_map.get(month_num)
 
-                # Fetch data from Firebase
-                entries_ref = db.reference(f"/WardTrips/{year}/{month_name}/{date}")
+                entries_ref = db.reference(f"/WardTrips/{year}/{month_name}/{date}", app=app)
                 entries_data = entries_ref.get()
-
                 if not entries_data:
-                    return Response({"error": "No entries found for the given date."}, status=404)
+                    continue
 
-                # Load YOLO model
-                model = YOLO("sops/best.pt")
-                model.to("cuda")
-
-                # Setup Firebase Storage
-                bucket = storage.bucket()
-
+                model = YOLO("automatedsop/beest.pt")
+                bucket = storage.bucket(app=app)
                 results = []
 
                 def classify_vehicle_state(labels):
@@ -804,21 +502,19 @@ class NoBotAskGeminiAPItripalstatus(APIView):
                     try:
                         blob = bucket.blob(img_path)
                         if blob.exists():
-                            image_data = blob.download_as_bytes()
+                            image_data = blob.download_as_bytes(timeout=30)
                             image = Image.open(io.BytesIO(image_data)).convert('RGB')
-                            image = image.resize((640, 640))
-
+                            image = image.resize((416, 416))
                             detections = model(image)[0]
                             labels = [model.names[int(cls)] for cls in detections.boxes.cls]
                             state = classify_vehicle_state(labels)
                             return (img_key, state, labels)
                         else:
                             return (img_key, "unknown", [])
-                    except Exception:
-                        return (img_key, "unknown", [])
+                    except Exception as e:
+                        return (img_key, "image is not uploaded", [])
 
                 for key, value in entries_data.items():
-
                     if key == 'lastEntry' or not isinstance(value, list):
                         continue
 
@@ -826,74 +522,111 @@ class NoBotAskGeminiAPItripalstatus(APIView):
                         if not isinstance(sub_value, dict):
                             continue
 
-                        try:
-                            image_states = {}
-                            raw_labels = {}
+                        image_states = {}
+                        raw_labels = {}
 
-                            # Define image paths
-                            image_paths = {
-                                "image01": f"Sikar/WardTrips/{year}/{month_name}/{date}/{key}/{sub_key}/tripFullImage.jpg",
-                                "image02": f"Sikar/WardTrips/{year}/{month_name}/{date}/{key}/{sub_key}/tripFullImage2.jpg",
-                                "image03": f"Sikar/WardTrips/{year}/{month_name}/{date}/{key}/{sub_key}/yardEmptyImage.jpg",
-                                "image04": f"Sikar/WardTrips/{year}/{month_name}/{date}/{key}/{sub_key}/yardFullImage.jpg",
+                        image_paths = {
+                            "image01": f"{site['folder_name']}/WardTrips/{year}/{month_name}/{date}/{key}/{sub_key}/tripFullImage.jpg",
+                            "image02": f"{site['folder_name']}/WardTrips/{year}/{month_name}/{date}/{key}/{sub_key}/tripFullImage2.jpg",
+                            "image03": f"{site['folder_name']}/WardTrips/{year}/{month_name}/{date}/{key}/{sub_key}/yardEmptyImage.jpg",
+                            "image04": f"{site['folder_name']}/WardTrips/{year}/{month_name}/{date}/{key}/{sub_key}/yardFullImage.jpg",
+                        }
+
+                        with ThreadPoolExecutor(max_workers=4) as executor:
+                            futures = {
+                                executor.submit(fetch_and_process_image, img_key, img_path): img_key
+                                for img_key, img_path in image_paths.items()
                             }
 
-                            # Fetch images in parallel
-                            with ThreadPoolExecutor(max_workers=4) as executor:
-                                futures = {
-                                    executor.submit(fetch_and_process_image, img_key, img_path): img_key
-                                    for img_key, img_path in image_paths.items()
-                                }
+                            for future in futures:
+                                img_key, state, labels = future.result()
+                                image_states[img_key] = state
+                                raw_labels[img_key] = labels
 
-                                for future in futures:
-                                    img_key, state, labels = future.result()
-                                    image_states[img_key] = state
-                                    raw_labels[img_key] = labels
+                        expected_order = [
+                            "uncovered filled with trash",
+                            "covered with tripal",
+                            "empty no trash",
+                            "uncovered filled with trash"
+                        ]
+                        detected_order = [
+                            image_states.get("image01", "unknown"),
+                            image_states.get("image02", "unknown"),
+                            image_states.get("image03", "unknown"),
+                            image_states.get("image04", "unknown")
+                        ]
 
-                            # Format prompt using available image state data and ask Gemini to decide
-                            prompt = f"""
-                            You are analyzing a vehicle trip based on detections from 4 images. The expected detection sequence is:
-                            1. uncover
-                            2. covered
-                            3. empty
-                            4. uncover
-    
-                            Each image has been classified into one of these states: "uncovered", "covered", "empty", or "unknown" (means image missing).
-    
-                            Check if the detections match the expected order exactly. If all match, the trip is correct. If any mismatch or unknown exists, the trip is incorrect. Explain what went wrong in 'remark'.
-    
-                            Respond in the following JSON format:
-                            {{
-                              "key": "{key}/{sub_key}",
-                              "detecteds_image01": "{image_states['image01']}", # this should be uncovered filled with trash
-                              "detecteds_image02": "{image_states['image02']}", #  this should be covered with tripal
-                              "detecteds_image03": "{image_states['image03']}", # this shuld be empty no trash
-                              "detecteds_image04": "{image_states['image04']}", # this should be uncovered filled with trash
-                              "remark": "<State 'Trip for zone {key}/{sub_key} is correct.' if all 4 match. Else state 'Trip for zone {key}/{sub_key} incorrect.' and mention which detecteds_image(s) are incorrect or missing.Always use the word 'missing' instead of 'unknown' in the remark.> and give reson why its incorrect"
-                            }}
-    
-                            find key subkey from prompt
-                            """
+                        if detected_order == expected_order:
+                            remark = f"Trip for zone {key}/{sub_key} is correct."
+                        else:
+                            incorrect_images = []
+                            unknown_images = []
 
-                            result_raw = call_gemini_api(prompt)
-                            result = json.loads(result_raw)
-                            print(result)
+                            for idx, (detected, expected) in enumerate(zip(detected_order, expected_order)):
+                                image_label = f"image{idx + 1}"
+                                if detected == "unknown":
+                                    unknown_images.append(image_label)
+                                elif detected != expected:
+                                    incorrect_images.append(image_label)
 
-                            results.append({
-                                "raw_detections": result['remark']
-                            })
+                            remark = f"Trip for zone {key} trip-{sub_key} is incorrect.\n"
+                            if incorrect_images:
+                                remark += f"Incorrect: {', '.join(incorrect_images)}.\n"
+                            if unknown_images:
+                                remark += f"Unknown: {', '.join(unknown_images)}."
 
-                        except Exception as e:
-                            results.append({
-                                "key": f"{key}/{sub_key}",
-                                "status": "Error processing images",
-                                "error": str(e)
-                            })
+                        print(sub_value)
+                        try:
+
+                            driver_refernce = db.reference(f"/Employees/{sub_value['driverId']}/GeneralDetails/",
+                                                           app=app)
+                            driver_data = driver_refernce.get()
+                        except:
+                            driver_data = {}
+                        if 'is incorrect' in remark:
+                            TripValidationReport.objects.create(
+                                site_name=site_name,
+                                zone=key,
+                                trip_number=str(sub_key),
+                                driver_id=sub_value.get("driverId", "N/A"),
+                                driver_name=driver_data.get('name', ''),
+                                driver_number=driver_data.get('mobile', ''),
+                                image01_state=image_states.get("image01", "unknown"),
+                                image02_state=image_states.get("image02", "unknown"),
+                                image03_state=image_states.get("image03", "unknown"),
+                                image04_state=image_states.get("image04", "unknown"),
+                                image01_path=f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{image_paths['image01'].replace('/', '%2F')}?alt=media",
+                                image02_path=f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{image_paths['image02'].replace('/', '%2F')}?alt=media",
+                                image03_path=f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{image_paths['image03'].replace('/', '%2F')}?alt=media",
+                                image04_path=f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{image_paths['image04'].replace('/', '%2F')}?alt=media",
+                                image01_correct=(detected_order[0] == expected_order[0]),
+                                image02_correct=(detected_order[1] == expected_order[1]),
+                                image03_correct=(detected_order[2] == expected_order[2]),
+                                image04_correct=(detected_order[3] == expected_order[3]),
+                                date=date,
+                                remark=remark
+                            )
+                        else:
+                            continue
+                report_url = f"http://35.209.151.196:8001/auto/tripal-report/?date={date}&site_name={site_name}"
+
+                mail = EmailMessage(
+                    subject=f"{site_name} - Tripal Validation Report - {date}",
+                    body=f"The Tripal validation report is ready. Click the link below to view it:\n\n{report_url}",
+                    from_email="harshitshrimalee.wevois@gmail.com",
+                    to=["harshitshrimalee22@gmail.com"],
+                )
+                mail.send()
+
+                if not results:
+                    continue
+
+                report_url = f"https://127.0.0.1:8000/auto/tripal-report/?date={date}"
+
+                print("📧 Email with report link sent successfully")
 
             return Response({
                 "date": date,
-                "total_entries": len(results),
-                "results": results
             })
 
         except Exception as e:
@@ -1006,9 +739,15 @@ class NoBotAskGeminiAPIDustbinStatus(APIView):
 
         IMAGE_RELEVANT_CLASSES = {
             "after_removed_trash_far_from_dustbin": ["outside trash dustbin", "outside no trash near dustbin"],
-            "after_removing_trash_from_top_view": ["empty dustbin", "10 percent fill dustbin", "30 percent fill dustbin", "50 percent fill dustbin", "80 percent fill dustbin", "100 percent fill dustbin", "120 percent fill dustbin"],
+            "after_removing_trash_from_top_view": ["empty dustbin", "10 percent fill dustbin",
+                                                   "30 percent fill dustbin", "50 percent fill dustbin",
+                                                   "80 percent fill dustbin", "100 percent fill dustbin",
+                                                   "120 percent fill dustbin"],
             "before_any_trash_detected_far_dustbin": ["outside trash dustbin", "outside no trash near dustbin"],
-            "before_dustbin_fill_in_start_top_view": ["empty dustbin", "10 percent fill dustbin", "30 percent fill dustbin", "50 percent fill dustbin", "80 percent fill dustbin", "100 percent fill dustbin", "120 percent fill dustbin"],
+            "before_dustbin_fill_in_start_top_view": ["empty dustbin", "10 percent fill dustbin",
+                                                      "30 percent fill dustbin", "50 percent fill dustbin",
+                                                      "80 percent fill dustbin", "100 percent fill dustbin",
+                                                      "120 percent fill dustbin"],
         }
 
         def classify_state(labels):
@@ -1119,12 +858,11 @@ class NoBotAskGeminiAPIDustbinStatus(APIView):
                     raw_labels = {}
 
                     image_paths = {
-                            "is_dustbin_fill_in_start_top_view": f"{site['folder_name']}/DustbinImages/DustbinPickHistory/{year}/{month_name}/{date}/{key}/{zone_id}/filledTopViewImage.jpg",
-                            "is_any_trash_detected_near_dustbin": f"{site['folder_name']}/DustbinImages/DustbinPickHistory/{year}/{month_name}/{date}/{key}/{zone_id}/filledFarFromImage.jpg",
-                            "after_removing_trash_from_inside": f"{site['folder_name']}/DustbinImages/DustbinPickHistory/{year}/{month_name}/{date}/{key}/{zone_id}/emptyTopViewImage.jpg",
-                            "after_removed_trash_near_from_dustbin": f"{site['folder_name']}/DustbinImages/DustbinPickHistory/{year}/{month_name}/{date}/{key}/{zone_id}/emptyFarFromImage.jpg"
+                        "is_dustbin_fill_in_start_top_view": f"{site['folder_name']}/DustbinImages/DustbinPickHistory/{year}/{month_name}/{date}/{key}/{zone_id}/filledTopViewImage.jpg",
+                        "is_any_trash_detected_near_dustbin": f"{site['folder_name']}/DustbinImages/DustbinPickHistory/{year}/{month_name}/{date}/{key}/{zone_id}/filledFarFromImage.jpg",
+                        "after_removing_trash_from_inside": f"{site['folder_name']}/DustbinImages/DustbinPickHistory/{year}/{month_name}/{date}/{key}/{zone_id}/emptyTopViewImage.jpg",
+                        "after_removed_trash_near_from_dustbin": f"{site['folder_name']}/DustbinImages/DustbinPickHistory/{year}/{month_name}/{date}/{key}/{zone_id}/emptyFarFromImage.jpg"
                     }
-
 
                     for img_key, img_path in image_paths.items():
                         url = value.get("Image", {}).get("Urls", {}).get(img_key, f"URL not found for {img_key}")
@@ -1135,7 +873,8 @@ class NoBotAskGeminiAPIDustbinStatus(APIView):
 
                     # Analysis logic
                     inside_clean = image_states.get("after_removing_trash_from_inside") == 'empty dustbin'
-                    outside_clean = image_states.get("after_removed_trash_near_from_dustbin") == 'No trash detected outside near dustbin area'
+                    outside_clean = image_states.get(
+                        "after_removed_trash_near_from_dustbin") == 'No trash detected outside near dustbin area'
 
                     if inside_clean:
                         inside_remark = 'Trash removed from inside properly'
@@ -1184,6 +923,260 @@ class NoBotAskGeminiAPIDustbinStatus(APIView):
                 self.send_dustbin_report_email(results, ["harshitshrimalee22@gmail.com"], date)
         return Response({"status": "Dustbin status report generated and emailed."})
 
+
+class NoBotAskGeminiAPIViewSkipLines(APIView):
+    def get(self, request):
+        try:
+            print(f"🔁 Skip Lines API called at: {datetime.now()} from {request.META.get('REMOTE_ADDR')}")
+
+            # Get date range (yesterday and day before)
+            today = datetime.today()
+            dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, 3)]
+            current_date = dates[0]  # Yesterday's date
+
+            month_name_map = {
+                "01": "January", "02": "February", "03": "March", "04": "April",
+                "05": "May", "06": "June", "07": "July", "08": "August",
+                "09": "September", "10": "October", "11": "November", "12": "December"
+            }
+
+            # Process each site similar to tripal validation
+            for site in site_info:
+                site_name = site["site_name"]
+                db_name = site["firebase_db"]
+                email = site["email"]
+                formatted_site_name = site_name.lower().replace(" ", "-")
+                app_name = f"{formatted_site_name}-app"
+
+                try:
+                    cred = credentials.Certificate("sops/cert.json")
+                    if app_name not in firebase_admin._apps:
+                        app = initialize_app(cred, {
+                            'databaseURL': f'https://{db_name}.firebaseio.com/',
+                            'storageBucket': 'dtdnavigator.appspot.com'
+                        }, name=app_name)
+                    else:
+                        app = firebase_admin.get_app(app_name)
+                except Exception as init_err:
+                    print(f"❌ Failed to init app for {site_name}: {init_err}")
+                    continue
+
+                bucket = storage.bucket(app=app)
+
+                # Get ward keys from WasteCollectionInfo
+                try:
+                    ward_keys_ref = db.reference("WasteCollectionInfo", app=app)
+                    ward_keys_data = ward_keys_ref.get(shallow=True)
+                    ward_keys = list(ward_keys_data.keys()) if ward_keys_data else []
+                except Exception as e:
+                    print(f"❌ Failed to get ward keys for {site_name}: {e}")
+                    continue
+
+                final_results = {}
+                records_created = 0
+
+                for ward_key in ward_keys:
+                    line_skips = {}
+                    ward_summary = {"total": 0, "completed": 0, "skipped": 0}
+
+                    for idx, date_str in enumerate(dates):
+                        year, month_num, day = date_str.split("-")
+                        month_name = month_name_map[month_num]
+
+                        try:
+                            path = f"WasteCollectionInfo/{ward_key}/{year}/{month_name}/{date_str}"
+                            date_data = db.reference(path, app=app).get()
+                            if not date_data:
+                                continue
+
+                            line_status_data = date_data.get("LineStatus", [])
+                            worker_detail_data = date_data.get("WorkerDetails", {})
+
+                            if not isinstance(line_status_data, list):
+                                continue
+
+                            ward_summary["total"] = len(line_status_data)
+
+                            for line_no, line_info in enumerate(line_status_data):
+                                if not isinstance(line_info, dict):
+                                    continue
+
+                                status = line_info.get("Status", "Unknown")
+                                reason = line_info.get("reason", "No reason provided")
+
+                                if status != "LineCompleted":
+                                    if idx == 0:  # Current date (yesterday)
+                                        # Get image URL
+                                        image_path = f"{site['folder_name']}/SkipData/{ward_key}/{year}/{month_name}/{date_str}/{line_no}.jpg"
+                                        blob = bucket.blob(image_path)
+                                        try:
+                                            if blob.exists():
+                                                blob.make_public()
+                                                image_url = f"https://storage.googleapis.com/{bucket.name}/{image_path}"
+                                            else:
+                                                image_url = None
+                                        except Exception as img_err:
+                                            print(f"⚠ Image error for {ward_key}/{line_no}: {img_err}")
+                                            image_url = None
+
+                                        # Get worker details
+                                        driver_id = worker_detail_data.get("driver", "")
+                                        driver_name = worker_detail_data.get("driverName", "")
+                                        helper_id = worker_detail_data.get("helper", "")
+                                        helper_name = worker_detail_data.get("helperName", "")
+                                        vehicle = worker_detail_data.get("vehicle", "")
+
+                                        # Get additional employee details
+                                        driver_info = {}
+                                        helper_info = {}
+                                        try:
+                                            if driver_id:
+                                                driver_info = db.reference(f"/EmployeeDetailData/{driver_id}",
+                                                                           app=app).get() or {}
+                                        except:
+                                            pass
+
+                                        try:
+                                            if helper_id:
+                                                helper_info = db.reference(f"/EmployeeDetailData/{helper_id}",
+                                                                           app=app).get() or {}
+                                        except:
+                                            pass
+
+                                        driver_mobile_number = driver_info.get("mobile", "")
+                                        helper_mobile_number = helper_info.get("mobile", "")
+
+                                        line_skips[line_no] = {
+                                            "reason": reason,
+                                            "image_url": image_url,
+                                            "driver_id": driver_id,
+                                            "driver_name": driver_name,
+                                            "helper_id": helper_id,
+                                            "helper_name": helper_name,
+                                            "driver_mobile": driver_mobile_number,
+                                            "helper_mobile": helper_mobile_number,
+                                            "vehicle": vehicle,
+                                            "repeated": False
+                                        }
+                                        ward_summary["skipped"] += 1
+                                    else:  # Previous day - check for repetition
+                                        if line_no in line_skips:
+                                            line_skips[line_no]["repeated"] = True
+                                else:
+                                    if idx == 0:  # Current date
+                                        ward_summary["completed"] += 1
+
+                        except Exception as err:
+                            print(f"⚠ Error processing {ward_key} {date_str}: {err}")
+
+                    # Save to database only if there are skipped lines
+                    if line_skips:
+                        for line_no, line_data in line_skips.items():
+                            try:
+                                # Create or update the skip lines record
+                                skip_record, created = SkipLinesReport.objects.get_or_create(
+                                    ward_key=ward_key,
+                                    city=site_name,  # Using site_name as city
+                                    line_no=line_no,
+                                    date=current_date,
+                                    defaults={
+                                        'status': 'Skipped',
+                                        'reason': line_data['reason'],
+                                        'image_url': line_data['image_url'],
+                                        'repeated': line_data['repeated'],
+                                        'driver_id': line_data['driver_id'],
+                                        'driver_name': line_data['driver_name'],
+                                        'driver_mobile': line_data['driver_mobile'],
+                                        'helper_id': line_data['helper_id'],
+                                        'helper_name': line_data['helper_name'],
+                                        'helper_mobile': line_data['helper_mobile'],
+                                        'vehicle_number': line_data['vehicle'],
+                                        'total': ward_summary['total'],
+                                        'completed': ward_summary['completed'],
+                                        'skipped': ward_summary['skipped']
+                                    }
+                                )
+
+                                if created:
+                                    records_created += 1
+                                    print(f"✅ Created skip record for {site_name} - Ward {ward_key} - Line {line_no}")
+                                else:
+                                    # Update existing record
+                                    skip_record.status = 'Skipped'
+                                    skip_record.reason = line_data['reason']
+                                    skip_record.image_url = line_data['image_url']
+                                    skip_record.repeated = line_data['repeated']
+                                    skip_record.driver_id = line_data['driver_id']
+                                    skip_record.driver_name = line_data['driver_name']
+                                    skip_record.driver_mobile = line_data['driver_mobile']
+                                    skip_record.helper_id = line_data['helper_id']
+                                    skip_record.helper_name = line_data['helper_name']
+                                    skip_record.helper_mobile = line_data['helper_mobile']
+                                    skip_record.vehicle_number = line_data['vehicle']
+                                    skip_record.total = ward_summary['total']
+                                    skip_record.completed = ward_summary['completed']
+                                    skip_record.skipped = ward_summary['skipped']
+                                    skip_record.save()
+                                    print(f"🔄 Updated skip record for {site_name} - Ward {ward_key} - Line {line_no}")
+
+                            except Exception as db_err:
+                                print(f"❌ Database error for {ward_key}/{line_no}: {db_err}")
+                                continue
+
+                        final_results[ward_key] = {
+                            "lines": line_skips,
+                            "summary": ward_summary
+                        }
+
+                # Send email notification similar to tripal validation
+                if final_results:
+                    report_url = f"http://35.209.151.196:8001/auto/skip-lines-report/?date={current_date}&site_name={site_name}"
+
+                    try:
+                        mail = EmailMessage(
+                            subject=f"{site_name} - Skip Lines Report - {current_date}",
+                            body=f"The Skip Lines report is ready. Click the link below to view it:\n\n{report_url}\n\nTotal records created: {records_created}",
+                            from_email="harshitshrimalee.wevois@gmail.com",
+                            to=["harshitshrimalee22@gmail.com"],
+                        )
+                        mail.send()
+                        print(f"📧 Email sent for {site_name} with {records_created} records")
+                    except Exception as mail_err:
+                        print(f"❌ Email sending failed for {site_name}: {mail_err}")
+
+                print(f"✅ Processed {site_name}: {len(final_results)} wards, {records_created} records created")
+
+            return JsonResponse({
+                "message": "Skip lines data processed and saved to database",
+                "date": current_date,
+                "total_records_processed": records_created,
+                "status": "success"
+            })
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"❌ Main error: {e}")
+            return JsonResponse({"error": str(e)}, status=500)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# deepak
 class GetDataForMonitoringTeamWasteCollectionApi(APIView):
     permission_classes = [AllowAny]
 
@@ -1602,5 +1595,3 @@ class GetWasteCollectionDataView(APIView):
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-# Create your views here.

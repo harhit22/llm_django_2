@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Tripal Validation Report</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #222;
+        }
+        h1 {
+            text-align: center;
+            color: #222;
+        }
+        form {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        label {
+            font-weight: bold;
+        }
+        input[type="date"] {
+            padding: 6px;
+            margin-left: 10px;
+            margin-right: 10px;
+            font-size: 16px;
+        }
+        button {
+            padding: 8px 16px;
+            background: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+
+        .trip {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+        }
+        .trip h3 {
+            margin-bottom: 10px;
+            color: #444;
+        }
+        .trip p {
+            margin: 5px 0;
+        }
+
+        .image-box {
+            display: inline-block;
+            margin: 10px;
+            text-align: center;
+            max-width: 100%;
+        }
+        .image-box img {
+            width: 100%;
+            max-width: 250px;
+            height: auto;
+            border: 4px solid transparent;
+            border-radius: 8px;
+            transition: 0.3s ease;
+        }
+
+        .incorrect {
+            border-color: red;
+            box-shadow: 0 0 12px rgba(255, 0, 0, 0.6);
+            color: red;
+        }
+
+        .call-btn {
+            display: inline-block;
+            margin-top: 12px;
+            padding: 8px 16px;
+            background-color: #28a745;
+            color: white;
+            font-weight: bold;
+            border-radius: 5px;
+            text-decoration: none;
+        }
+        .call-btn:hover {
+            background-color: #218838;
+        }
+
+        @media (max-width: 768px) {
+            .image-box {
+                display: block;
+                margin: 20px auto;
+            }
+            .trip {
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<h1>Tripal Validation Report</h1>
+
+<form method="get">
+    <label for="date">Filter by Date:</label>
+    <input type="date" id="date" name="date" value="{{ filter_date }}">
+    <button type="submit">Filter</button>
+</form>
+
+{% for report in reports %}
+<div class="trip">
+    <h3>{{ report.site_name }} | Zone: {{ report.zone }} | Trip: {{ report.trip_number }}</h3>
+    <p><strong>Driver:</strong> {{ report.driver_name }} ({{ report.driver_number }})</p>
+    <p><strong>Remark:</strong> {{ report.remark }}</p>
+
+    {% if report.driver_number and report.driver_number != "N/A" %}
+        <a class="call-btn" href="tel:{{ report.driver_number }}">📞 Call Driver</a>
+    {% endif %}
+
+    {% if not report.image01_correct %}
+    <div class="image-box">
+        <img src="{{ report.image01_path }}" class="incorrect">
+        <p class="incorrect">Image 01 - {{ report.image01_state }}</p>
+        <p>In this image there should be trash without tripal in vehicle</p>
+    </div>
+    {% endif %}
+
+    {% if not report.image02_correct %}
+    <div class="image-box">
+        <img src="{{ report.image02_path }}" class="incorrect">
+        <p class="incorrect">Image 02 - {{ report.image02_state }}</p>
+        <p>In this image there should be trash covered with tripal in vehicle</p>
+    </div>
+    {% endif %}
+
+    {% if not report.image03_correct %}
+    <div class="image-box">
+        <img src="{{ report.image03_path }}" class="incorrect">
+        <p class="incorrect">Image 03 - {{ report.image03_state }}</p>
+        <p>In this image there should be no trash in vehicle</p>
+    </div>
+    {% endif %}
+
+    {% if not report.image04_correct %}
+    <div class="image-box">
+        <img src="{{ report.image04_path }}" class="incorrect">
+        <p class="incorrect">Image 04 - {{ report.image04_state }}</p>
+        <p>This image should contain trash without any tripal</p>
+    </div>
+    {% endif %}
+</div>
+{% empty %}
+    <p>No reports found for the selected date.</p>
+{% endfor %}
+
+</body>
+</html>

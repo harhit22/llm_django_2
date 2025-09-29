@@ -3,7 +3,7 @@ from .views import  NoBotAskGeminiAPIView, NoBotAskGeminiAPIViewTransportExec, \
     NoBotAskGeminiAPIViewSkipLines, OCRDieselSlipValidationAPIView, SendCitiesDataAPIView, SendSopDataApiView,\
     NoBotAskGeminiAPItripalstatus, NoBotAskGeminiAPIDustbinStatus, GetDataForMonitoringTeamWasteCollectionApi,\
     GetDataForMonitoringTeamWasteCollectionAllCityApi, PlanCreatedForDustbin, GetWasteCollectionDataView
-
+from automatedsop import views
 urlpatterns = [
     path("sop1/", NoBotAskGeminiAPIView.as_view(), name="sop1"),
     path("sop2/", NoBotAskGeminiAPIViewTransportExec.as_view(), name="sop2"),
@@ -16,6 +16,5 @@ urlpatterns = [
     path('api/sops/', SendSopDataApiView.as_view(), name='send-sop-data'),
     path('get-waste-data/', GetDataForMonitoringTeamWasteCollectionApi.as_view(), name='get-waste-data'),
     path('get-waste-data-all-city/', GetDataForMonitoringTeamWasteCollectionAllCityApi.as_view(), name='get-waste-data'),
-    path('get-waste/', GetWasteCollectionDataView.as_view(), name="get-waste")
+    path('get-waste/', GetWasteCollectionDataView.as_view(), name="get-waste"),
 ]
-

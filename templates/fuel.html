@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Fuel Slip Validation Report</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: #f7f9fc;
+            padding: 20px;
+            color: #222;
+            line-height: 1.6;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+        form {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        input[type="date"],
+        select {
+            padding: 8px;
+            font-size: 16px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            margin-right: 10px;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .entry {
+            background: #fff;
+            padding: 20px;
+            margin-bottom: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        }
+        .entry h3 {
+            margin: 0 0 10px 0;
+            color: #444;
+            font-size: 18px;
+        }
+        .match {
+            font-size: 15px;
+            margin-bottom: 15px;
+        }
+        .match span.false {
+            color: red;
+            font-weight: bold;
+        }
+        .match span.true {
+            color: green;
+            font-weight: bold;
+        }
+        .image-box {
+            text-align: center;
+            margin-top: 15px;
+        }
+        .image-box a {
+            display: inline-block;
+            text-decoration: none;
+        }
+        .image-box img {
+            width: 100%;
+            max-width: 350px;
+            height: auto;
+            border: 3px solid #dc3545;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(255, 0, 0, 0.3);
+            transition: transform 0.3s ease;
+        }
+        .image-box img:hover {
+            transform: scale(1.05);
+        }
+        .remark {
+            margin-top: 10px;
+            color: #c82333;
+            font-weight: 600;
+            font-size: 15px;
+            text-align: center;
+        }
+        .no-error {
+            text-align: center;
+            font-size: 18px;
+            padding: 50px;
+            color: #28a745;
+        }
+        .no-error span {
+            font-size: 28px;
+            display: block;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Fuel Slip Validation Report</h1>
+
+<form method="get">
+    <label for="date">Date:</label>
+    <input type="date" id="date" name="date" value="{{ filter_date }}">
+
+    <label for="site_name">Site:</label>
+    <select id="site_name" name="site_name">
+        <option value="">All</option>
+        {% for site in site_names %}
+    <option value="{{ site }}" {% if site == selected_site %}selected{% endif %}>{{ site }}</option>
+{% endfor %}
+
+    </select>
+
+    <button type="submit">Filter</button>
+</form>
+
+{% with found=0 %}
+    {% for report in reports %}
+        {% if  report.amount_match or  report.volume_match %}
+            {% with found=1 %}
+            <div class="entry">
+                <h3>{{ report.site_name }} | Vehicle: {{ report.vehicle }} | Entry ID: {{ report.key }}</h3>
+                <p>
+                    👤 Driver: <strong>{{ report.driver_name|default:"N/A" }}</strong>
+                    {% if report.driver_number %}
+                        (<a href="tel:{{ report.driver_number }}" style="color: #28a745; text-decoration: none;">📞 Call</a>)
+                    {% endif %}
+                </p>
+
+                <div class="match">
+                    💰 Amount Match:
+                    <span class="{{ report.amount_match|yesno:'true,false' }}">{{ report.amount_match }}</span>
+                    | Expected: ₹{{ report.expected_amount }}<br>
+                    ⛽ Volume Match:
+                    <span class="{{ report.volume_match|yesno:'true,false' }}">{{ report.volume_match }}</span>
+                    | Expected: {{ report.expected_volume }} L
+                </div>
+
+                <div class="image-box">
+                    <a href="{{ report.image_path }}" target="_blank">
+                        <img src="{{ report.image_path }}" alt="Fuel Slip Image">
+                    </a>
+                </div>
+
+                <div class="remark">
+                    {{ report.remark|default:"No remarks available." }}
+                </div>
+            </div>
+            {% endwith %}
+        {% endif %}
+    {% endfor %}
+
+    {% if found == 0 %}
+    <div class="no-error">
+        ✅ Everything looks perfect{% if selected_site %} in <strong>{{ selected_site|capfirst }}</strong>{% endif %} today!<br>
+        <span>🎉 No validation issues found.</span>
+    </div>
+    {% endif %}
+{% endwith %}
+
+</body>
+</html>

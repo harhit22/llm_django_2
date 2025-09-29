@@ -21,4 +21,5 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('sop/', include('sops.urls')),
     path('auto/', include('automatedsop.urls')),
+    path('mobile-api/', include('mobileApi.urls')),
 ]

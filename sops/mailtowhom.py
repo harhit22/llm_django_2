@@ -59,7 +59,7 @@ site_info = [
         "site_name": "jodhpur",
         "responsible_person": "Deepak Jangid",
         "email": "deepak.wevois123@gmail.com",
-        "firebase_db": "dtdnavigator",
+        "firebase_db": "dtdnjodhpur",
         "folder_name": "Jodhpur"
     },
     {
@@ -69,13 +69,7 @@ site_info = [
         "firebase_db": "dtdkuchaman",
         "folder_name": "Kuchaman"
     },
-    {
-        "site_name": "sonipath",
-        "responsible_person": "Krishankant",
-        "email": "kkjaiminiwevois424@gmail.com",
-        "firebase_db": "dtdsonipat-new",
-        "folder_name": "Sonipat"
-    },
+
     {
         "site_name": "ajmer",
         "responsible_person": "Keshav",
@@ -117,5 +111,6 @@ site_info = [
         "email": "chandraveer.wevois@gmail.com",
         "firebase_db": "dtdnawa",
         "folder_name": "Nawa"
-    }
+    },
 ]
+
